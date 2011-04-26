@@ -23,11 +23,11 @@ uint8_t queryTool = 0x00;
 
 uint8_t extIndex = 0x02;
 uint8_t extTemp = 0x00;
-uint8_t extTarget = 0x00;
+//uint8_t extTarget = 0x00;
 
 uint8_t hbpIndex = 0x1E;
 uint8_t hbpTemp = 0x00;
-uint8_t hbpTarget = 0x00;
+//uint8_t hbpTarget = 0x00;
 
 uint8_t lastFile[32];
 
@@ -305,12 +305,12 @@ void debugDisplay() {
 
 void tempDisplay() {
   lcd.setCursor(0,0);
-  lcd.print("  EXT     HBP   ");
+  lcd.print("ExtruderPlatform");
   clearLCD(1);
-  printTemp(extTemp, 0, 1);
-  printTemp(extTarget, 4, 1);
-  printTemp(hbpTemp, 8, 1);
-  printTemp(hbpTarget, 12, 1);
+  printTemp(extTemp, 2, 1);
+  //printTemp(extTarget, 4, 1);
+  printTemp(hbpTemp, 10, 1);
+  //printTemp(hbpTarget, 12, 1);
 }
 
 void irButtonAction(decode_results *results) {
