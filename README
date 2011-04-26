@@ -1,0 +1,34 @@
+-----------------------
+     makeIRbot 1.01
+-----------------------
+By Gord Christmas <codexmas@gmail.com>
+Hanging out on #makerbot as codeXmas
+
+
+Purpose?
+-----------------------
+1. To be able to use a Makerbot without a computer attached, or having to start a print from the SD card via ReplicatorG.
+2. Control a Makerbot externally by simulating the serial protocol that ReplicatorG implements.
+3. Provide as much functionality as ReplicatorG control panel without hacking the firmware for the machine.
+4. Learn C/C++ and hack things with Arduino
+
+
+What do you need?
+-----------------------
+1. An Arduino of any form that is an ATMega328 or greater <http://www.solarbotics.com/products/kardw/> $10 Super compact version.
+2. A 3 pin 38kHz IR Receiver module. I used <TSOP39238CZ1>
+3. A 16x2 LCD that is HD44780 compatible. Will also need a 10k pot for contrast control.
+4. <optional> Piezo buzzer for future audio feedback.
+5. External Libraries
+    a) MenuBackend
+    b) IRremote
+    c) LiquidCrystal
+
+I used the LED on Pin 13 as a status light, part of the Ardweeny kit.
+
+
+How do I make it work?
+-----------------------
+First off, breadboard the parts together using the pinouts that are specified in the Sketch.
+Then attach jumper wires from Pin 0 and Pin 1 for the Rx/Tx lines on the Arduino to the Makerbot FTDI header pins 4&5.
+They might be reversed, so if you are getting no response at all, swap the Rx/Tx wires and try again.

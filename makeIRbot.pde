@@ -11,7 +11,7 @@ int serialIndex = 0;
 uint8_t serialIn[64];  // for incoming serial data 
 
 // EEPROM
-#include <EEPROM.h>
+//#include <EEPROM.h>
 
 // makeIRbot Variables
 float makeIRbot = 1.01;
