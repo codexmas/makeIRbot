@@ -31,6 +31,10 @@ uint8_t hbpTemp = 0x00;
 
 uint8_t lastFile[32];
 
+uint8_t axisX = {0x00};
+uint8_t axisY = {0x00};
+uint8_t axisZ = {0x00};
+
 #include <LiquidCrystal.h>
 const int numRows = 2;
 const int numCols = 16;
@@ -42,6 +46,12 @@ void printTemp(uint8_t temp, int col, int row) {
   else if(temp < 100) { lcd.print(" ");}
   lcd.print(temp, DEC);
   lcd.print((char) 223);
+}
+
+void printPos(uint8_t temp, int col, int row) {
+  lcd.setCursor(col, row);
+  // Convert 4byte position
+  lcd.print("--0.0");
 }
 
 // Return true if filename is printable
@@ -91,21 +101,23 @@ MenuBackend menu = MenuBackend(menuUseEvent,menuChangeEvent);
   MenuItem m_first =      MenuItem       ("3 SD First     >");
     MenuItem m_next =       MenuItem     ("3 SD Next     <>");
       MenuItem m_build =      MenuItem   ("3 SD Play File< ");
+  MenuItem m_pos =        MenuItem       ("4 Position      ");
 
 //this function builds the menu and connects the correct items together
 void menuSetup() {
   //add the file menu to the menu root
   menu.getRoot().add(m_connect); 
     //setup the settings menu item
-    m_connect.addBefore(m_first);
+    m_connect.addBefore(m_pos);
     m_connect.addAfter(m_temps);
       m_connect.addRight(m_debug);
     m_temps.addAfter(m_first);
       m_temps.addRight(m_extruder);
         m_extruder.addRight(m_hbp);
-    m_first.addAfter(m_connect);
+    m_first.addAfter(m_pos);
       m_first.addRight(m_next);
         m_next.addRight(m_build);
+    m_pos.addAfter(m_connect);
 }
 
 void menuUseEvent(MenuUseEvent used){
@@ -145,6 +157,9 @@ void menuUseEvent(MenuUseEvent used){
       lcd.print("<Invalid>");
     }
   }
+  else if (used.item == m_pos) {
+    getPosition();
+  }
 }
 
 void menuChangeEvent(MenuChangeEvent changed) {
@@ -166,6 +181,7 @@ void setup() {
   lcd.print("makeIRbot v");
   lcd.print(makeIRbot);
   menuSetup();
+  menu.moveDown();
   irrecv.enableIRIn(); // Start the receiver
   Serial.begin(38400);
 }
@@ -181,6 +197,11 @@ void loop() {
       if (serialIn[0] == 0xD5) {
         responseRecv = serialIn[2];
         switch(commandSent) {
+          case 0x04:
+          
+            posDisplay();
+            break;
+            
           case 0x10: // Print file
           
             break;
@@ -313,6 +334,15 @@ void tempDisplay() {
   //printTemp(hbpTarget, 12, 1);
 }
 
+void posDisplay() {
+  lcd.setCursor(0,0);
+  lcd.print("  X    Y    Z  ");
+  clearLCD(1);
+  printPos(axisX, 0, 1);
+  printPos(axisY, 5, 1);
+  printPos(axisZ, 10, 1);
+}
+
 void irButtonAction(decode_results *results) {
   int code = (int) results->value;
   if(code != -1) {
@@ -370,6 +400,12 @@ void playbackFile(uint8_t *filename) {
   data[i + 1] = 0x00; // Add null termination
   
   sendBytesWithCRC(data, i + 2);
+}
+
+void getPosition() {
+  uint8_t data[] = {
+    0x04 };
+  sendBytesWithCRC(data, 1);
 }
 
 void sendBytesWithCRC(uint8_t *data, int len){

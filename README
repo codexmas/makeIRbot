@@ -36,7 +36,8 @@ every Arduino out there
 How do I make it work?
 -----------------------
 First off, breadboard the parts together using the pinouts that are specified in
-the Sketch.
+the Sketch. You will need a +5v source, I used an extra floppy drive connector
+from the bot. Pins on it are Red [+5v] Black [GND] Black [GND] Yellow [+12v]
 
 Then attach jumper wires from Pin 0 and Pin 1 for the Rx/Tx lines on the Arduino to
 the Makerbot FTDI header pins 4&5.
