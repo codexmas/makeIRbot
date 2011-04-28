@@ -29,9 +29,9 @@ uint8_t hbpIndex = 0x1E;
 uint8_t hbpTemp = 0x00;
 //uint8_t hbpTarget = 0x00;
 
-uint8_t lastFile[32];
+uint8_t lastFile[12];
 
-uint8_t axisX = {0x00};
+uint8_t axisX = {0x00};    
 uint8_t axisY = {0x00};
 uint8_t axisZ = {0x00};
 
@@ -98,9 +98,8 @@ MenuBackend menu = MenuBackend(menuUseEvent,menuChangeEvent);
   MenuItem m_temps =      MenuItem       ("2 Temp         >");
     MenuItem m_extruder =   MenuItem     ("2 Set EXT Temp<>");
       MenuItem m_hbp =        MenuItem   ("2 Set HBP Temp< ");
-  MenuItem m_first =      MenuItem       ("3 SD First     >");
-    MenuItem m_next =       MenuItem     ("3 SD Next     <>");
-      MenuItem m_build =      MenuItem   ("3 SD Play File< ");
+  MenuItem m_file =       MenuItem       ("3 SD File      >");
+    MenuItem m_build =      MenuItem     ("3 SD Play File< ");
   MenuItem m_pos =        MenuItem       ("4 Position      ");
 
 //this function builds the menu and connects the correct items together
@@ -111,12 +110,11 @@ void menuSetup() {
     m_connect.addBefore(m_pos);
     m_connect.addAfter(m_temps);
       m_connect.addRight(m_debug);
-    m_temps.addAfter(m_first);
+    m_temps.addAfter(m_file);
       m_temps.addRight(m_extruder);
         m_extruder.addRight(m_hbp);
-    m_first.addAfter(m_pos);
-      m_first.addRight(m_next);
-        m_next.addRight(m_build);
+    m_file.addAfter(m_pos);
+      m_file.addRight(m_build);
     m_pos.addAfter(m_connect);
 }
 
@@ -138,13 +136,13 @@ void menuUseEvent(MenuUseEvent used){
     getTemp(hbpIndex);
     delay(30);
   }
-  else if (used.item == m_first) {
-    fetchFirstFilename();
-    menu.moveRight();
-    delay(30);
-  }
-  else if (used.item == m_next) {
-    fetchNextFilename();
+  else if (used.item == m_file) {
+    if (lastFile[0] == 0x00) {
+      fetchFirstFilename();
+    }
+    else {
+      fetchNextFilename();
+    }
     delay(30);
   }
   else if (used.item == m_build) {
@@ -166,11 +164,8 @@ void menuChangeEvent(MenuChangeEvent changed) {
   clearLCD(0);
   lcd.print(changed.to.getName());
   if(changed.to.getName() == m_build) {
-    if(validFile){
-      printFilename();
-    }
-    else {
-      menu.moveLeft(); // Prevent playback of invalid file
+    if(!validFile){
+      menu.moveLeft();
     }
   }
 }
@@ -211,11 +206,11 @@ void loop() {
             tempDisplay();
             break;
           
-          case 0x12:
-            for (int cf = 0; cf < 32; cf++) {
+          case 0x12: // Read filename from SD Card
+            for (int cf = 0; cf < 12; cf++) {
               lastFile[cf] = 0x00;
             }
-            for (int rf = 0; rf < 32; rf++) {
+            for (int rf = 0; rf < 12; rf++) {
               if(serialIn[rf + 4] != 0x00) {
                 lastFile[rf] = serialIn[rf + 4];
               }
@@ -365,15 +360,21 @@ void irButtonAction(decode_results *results) {
   }
 }
 
-void queryMakerbotInfo() {
+void queryMakerbotInfo() { // Fetch build name of machine (Cupcake)
   uint8_t data[]= {
     0x14, 0x18, 0x00  };
   sendBytesWithCRC(data, sizeof(data));
 }
 
+void queryMachineName() { // Read 16 chars from EEPROM at Offset 32
+  uint8_t data[] = {
+    0x0C, 0x20, 0x00, 0x10 };
+  sendBytesWithCRC(data, sizeof(data));
+}
+
 void getTemp(uint8_t toolIndex) {
   uint8_t data[]= {
-    0x0A, 0x00, toolIndex  };
+    0x0A, 0x00, toolIndex };
   sendBytesWithCRC(data, sizeof(data));
 }
 
