@@ -15,21 +15,30 @@ uint8_t serialIn[64];  // for incoming serial data
 
 // makeIRbot Variables
 float makeIRbot = 1.01;
+unsigned long refreshLast = 0; // Used for tracking refresh intervals
+unsigned long refreshInterval = 0; // Set by diferent displays
 uint8_t commandSent = 0x00;
 uint8_t responseRecv = 0x00;
 int responseLength = 0;
-boolean validFile = false;
 uint8_t queryTool = 0x00;
+
+
+uint8_t txBuf[32];
+uint8_t rxBuf[32];
 
 uint8_t extIndex = 0x02;
 uint8_t extTemp = 0x00;
-//uint8_t extTarget = 0x00;
+uint8_t extTarget = 0x00;
 
 uint8_t hbpIndex = 0x1E;
 uint8_t hbpTemp = 0x00;
-//uint8_t hbpTarget = 0x00;
+uint8_t hbpTarget = 0x00;
 
 uint8_t lastFile[12];
+boolean validFile = false;
+// .s3g file Extension
+uint8_t validExt[4] = {0x2E, 0x73, 0x33, 0x67}; // ".s3g"
+
 
 uint8_t axisX = {0x00};    
 uint8_t axisY = {0x00};
@@ -54,40 +63,48 @@ void printPos(uint8_t temp, int col, int row) {
   lcd.print("--0.0");
 }
 
-// Return true if filename is printable
-void printFilename(int output=1) {
+void validateFilename() {
   validFile = false;
-  uint8_t valid[4] = {0x2E, 0x73, 0x33, 0x67}; // ".s3g"      
-  if (output == 1) {
-    clearLCD(1);
-    lcd.setCursor(0, 1);
+  // First char is NULL?
+  if (lastFile[0] != 0x00) {
+    // Ignore hidden dot files
+    if (lastFile[0] != 0x2E) {
+      for (int i = 0; i < 12; i++) {
+        // Watch for the period signifying the file extension
+        if (lastFile[i] == 0x2E) {
+          // Can we match the entire file extension?
+          if (lastFile[i+1] == validExt[1] && 
+              lastFile[i+2] == validExt[2] && 
+              lastFile[i+3] == validExt[3]) {
+            validFile = true;
+          }
+        }
+      }
+    }
   }
+}
+
+void printFilename() {
+  validateFilename();
+  clearLCD(1);
+  lcd.setCursor(0, 1);
+  
   if (lastFile[0] == 0x00) {
-    if (output == 1) {lcd.print("<NULL>"); }
+    lcd.print("<NULL>");
   }
   else {
-    for (int i = 0; i < responseLength; i++) {
-      if (lastFile[i] == 0x00) { 
-        uint8_t ext[4] = {
-          lastFile[i - 4], lastFile[i - 3], lastFile[i - 2], lastFile[i - 1] };
-        if (ext[0] == valid[0] && ext[1] == valid[1] && ext[2] == valid[2] && ext[3] == valid[3]) {
-          validFile = true;
-        }
-        break; 
-      }
-      if (output == 1) {
-        lcd.print(lastFile[i]);
-      }
+    for (int i = 0; i < 12; i++) {
+      if (lastFile[i] == 0x00) {break;}
+      lcd.print(lastFile[i]);
     }
   }
-  if (output == 1) {
-    lcd.setCursor(14, 1);
-    if (validFile == true) {
-      lcd.print("OK");
-    }
-    else {
-      lcd.print("--");
-    }
+  // Indicate valid file or not
+  lcd.setCursor(numCols - 2, numRows - 1);
+  if (validFile == true) {
+    lcd.print("OK");
+  }
+  else {
+    lcd.print("--");
   }
 }
 
@@ -121,7 +138,7 @@ void menuSetup() {
 void menuUseEvent(MenuUseEvent used){
   clearLCD(0);
   lcd.print(used.item.getName());
-  delay(100);
+  
   if (used.item == m_connect) {
     queryMakerbotInfo();
     delay(30);
@@ -163,10 +180,16 @@ void menuUseEvent(MenuUseEvent used){
 void menuChangeEvent(MenuChangeEvent changed) {
   clearLCD(0);
   lcd.print(changed.to.getName());
-  if(changed.to.getName() == m_build) {
-    if(!validFile){
+  
+  refreshInterval = 0; // Always clear refresh interval when the menu changes
+  
+  if (changed.to.getName() == m_build) {
+    if (!validFile) {
       menu.moveLeft();
     }
+  }
+  else if (changed.to.getName() == m_temps) {
+    refreshInterval = 2000;
   }
 }
 
@@ -181,7 +204,7 @@ void setup() {
   Serial.begin(38400);
 }
 
-void loop() {  
+void loop() {    
   // Watch for Serial Data
   if (Serial.available() > 0) {
     delay(1); // Need delay to properly grab serial data
@@ -299,6 +322,15 @@ void loop() {
         irButtonAction(&results);
         irrecv.resume(); // Receive the next value
       }
+      
+      // Refresh various displays
+      if (refreshInterval > 0 ) {
+        // Trigger refresh
+        if (millis() - refreshLast > refreshInterval ) {
+          refreshLast = millis();
+          menu.use();
+        }
+      }
     }
   }
 }
@@ -321,7 +353,7 @@ void debugDisplay() {
 
 void tempDisplay() {
   lcd.setCursor(0,0);
-  lcd.print("ExtruderPlatform");
+  lcd.print("Ext       HBP   ");
   clearLCD(1);
   printTemp(extTemp, 2, 1);
   //printTemp(extTarget, 4, 1);
@@ -450,7 +482,9 @@ uint8_t calculateCRC (uint8_t crc, uint8_t data) {
 
 void clearLCD(int row) {
   lcd.setCursor(0, row);
-  lcd.print("                ");
+  for (int i = 0; i < numCols; i++) {
+    lcd.print(" ");
+  }
   lcd.setCursor(0, row);
 }
 
