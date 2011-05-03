@@ -15,14 +15,23 @@ uint8_t serialIn[64];  // for incoming serial data
 
 // makeIRbot Variables
 float makeIRbot = 1.01;
+uint8_t machineName[16];
 unsigned long refreshLast = 0; // Used for tracking refresh intervals
 unsigned long refreshInterval = 0; // Set by diferent displays
 uint8_t commandSent = 0x00;
 uint8_t responseRecv = 0x00;
 int responseLength = 0;
 uint8_t queryTool = 0x00;
-
-
+uint8_t flags = 0x00; /* Bit fields for status
+  0  :  Connected
+  1  :  Building
+  2  :  Valid File
+  3  :
+  4  :
+  5  :
+  6  :
+  7  :
+*/
 uint8_t txBuf[32];
 uint8_t rxBuf[32];
 
@@ -35,10 +44,8 @@ uint8_t hbpTemp = 0x00;
 uint8_t hbpTarget = 0x00;
 
 uint8_t lastFile[12];
-boolean validFile = false;
 // .s3g file Extension
 uint8_t validExt[4] = {0x2E, 0x73, 0x33, 0x67}; // ".s3g"
-
 
 uint8_t axisX = {0x00};    
 uint8_t axisY = {0x00};
@@ -64,7 +71,7 @@ void printPos(uint8_t temp, int col, int row) {
 }
 
 void validateFilename() {
-  validFile = false;
+  bitClear(flags, 2);
   // First char is NULL?
   if (lastFile[0] != 0x00) {
     // Ignore hidden dot files
@@ -76,7 +83,7 @@ void validateFilename() {
           if (lastFile[i+1] == validExt[1] && 
               lastFile[i+2] == validExt[2] && 
               lastFile[i+3] == validExt[3]) {
-            validFile = true;
+            bitSet(flags, 2);
           }
         }
       }
@@ -85,7 +92,6 @@ void validateFilename() {
 }
 
 void printFilename() {
-  validateFilename();
   clearLCD(1);
   lcd.setCursor(0, 1);
   
@@ -99,8 +105,8 @@ void printFilename() {
     }
   }
   // Indicate valid file or not
-  lcd.setCursor(numCols - 2, numRows - 1);
-  if (validFile == true) {
+  lcd.setCursor(numCols - 2, 1);
+  if (bitRead(flags, 2)) {
     lcd.print("OK");
   }
   else {
@@ -111,7 +117,8 @@ void printFilename() {
 MenuBackend menu = MenuBackend(menuUseEvent,menuChangeEvent);
   //beneath is list of menu items needed to build the menu
   MenuItem m_connect =    MenuItem       ("1 Connect      >");
-    MenuItem m_debug =      MenuItem     ("1 Debug       < ");
+    MenuItem m_debug =      MenuItem     ("1 Debug       <>");
+      MenuItem m_flags =      MenuItem   ("1 Flags       < ");
   MenuItem m_temps =      MenuItem       ("2 Temp         >");
     MenuItem m_extruder =   MenuItem     ("2 Set EXT Temp<>");
       MenuItem m_hbp =        MenuItem   ("2 Set HBP Temp< ");
@@ -127,6 +134,7 @@ void menuSetup() {
     m_connect.addBefore(m_pos);
     m_connect.addAfter(m_temps);
       m_connect.addRight(m_debug);
+        m_debug.addRight(m_flags);
     m_temps.addAfter(m_file);
       m_temps.addRight(m_extruder);
         m_extruder.addRight(m_hbp);
@@ -136,15 +144,17 @@ void menuSetup() {
 }
 
 void menuUseEvent(MenuUseEvent used){
-  clearLCD(0);
-  lcd.print(used.item.getName());
-  
   if (used.item == m_connect) {
-    queryMakerbotInfo();
+    bitClear(flags, 0); // Clear connected flag
+    queryMachineName();
     delay(30);
   }  
   else if (used.item == m_debug) {
     debugDisplay();
+    delay(30);
+  }
+  else if (used.item == m_flags) {
+    flagDisplay();
     delay(30);
   }
   else if (used.item == m_temps) {
@@ -163,9 +173,9 @@ void menuUseEvent(MenuUseEvent used){
     delay(30);
   }
   else if (used.item == m_build) {
-    if (validFile) {
-      menu.moveLeft();
+    if (bitRead(flags, 2)) {
       playbackFile(lastFile);
+      menu.moveLeft();
     }
     else {
       clearLCD(1);
@@ -184,12 +194,24 @@ void menuChangeEvent(MenuChangeEvent changed) {
   refreshInterval = 0; // Always clear refresh interval when the menu changes
   
   if (changed.to.getName() == m_build) {
-    if (!validFile) {
+    if (!bitRead(flags, 2)) { // Valid filename?
       menu.moveLeft();
     }
   }
+  else if (changed.to.getName() == m_file) {
+    printFilename(); // Make sure the filename display is always updated
+  }
   else if (changed.to.getName() == m_temps) {
     refreshInterval = 2000;
+  }
+  else if (changed.to.getName() == m_pos) {
+    refreshInterval = 2000;
+  }
+  else if (changed.to.getName() == m_flags) {
+    refreshInterval = 100;
+  }
+  else if (changed.to.getName() == m_debug) {
+    refreshInterval = 500;
   }
 }
 
@@ -202,6 +224,7 @@ void setup() {
   menu.moveDown();
   irrecv.enableIRIn(); // Start the receiver
   Serial.begin(38400);
+  menu.use(); // Call the connect menu to initialize the connection
 }
 
 void loop() {    
@@ -228,6 +251,19 @@ void loop() {
             hbpTemp = serialIn[9];
             tempDisplay();
             break;
+            
+          case 0x0C:
+            if(serialIn[2] == 0x01) {
+              bitSet(flags, 0);
+              for (int mn = 0; mn < 16; mn++) {
+                machineName[mn] = serialIn[mn + 3];
+              }
+            }
+            else {
+              bitClear(flags, 0);
+            }
+            infoDisplay();
+            break;
           
           case 0x12: // Read filename from SD Card
             for (int cf = 0; cf < 12; cf++) {
@@ -241,6 +277,7 @@ void loop() {
                 break;
               }
             }
+            validateFilename();
             printFilename();
             break;
           
@@ -351,14 +388,41 @@ void debugDisplay() {
   }
 }
 
+void infoDisplay() {
+  lcd.setCursor(0,1);
+  if (bitRead(flags, 0)) {
+    for (int i = 0; i < 16; i++) {
+      if (machineName[i] != 0x00) {
+        lcd.print(machineName[i]);
+      }
+      else {
+        lcd.print(" ");
+      }
+    }
+  }
+  else {
+    lcd.print("<NO CONNECTION> ");
+  }
+}
+
+void flagDisplay() {
+  lcd.setCursor(0, 0);
+  lcd.print(" C B V ? ? ? ? ?");
+  lcd.setCursor(0, 1);
+  for (int i = 0; i < 8; i++) {
+    lcd.print(" ");
+    lcd.print(bitRead(flags, i));
+  }
+}
+
 void tempDisplay() {
   lcd.setCursor(0,0);
-  lcd.print("Ext       HBP   ");
+  lcd.print("    Ext     HBP ");
   clearLCD(1);
-  printTemp(extTemp, 2, 1);
-  //printTemp(extTarget, 4, 1);
-  printTemp(hbpTemp, 10, 1);
-  //printTemp(hbpTarget, 12, 1);
+  printTemp(extTarget, 0, 1);
+  printTemp(extTemp, 4, 1);
+  printTemp(hbpTarget, 8, 1);
+  printTemp(hbpTemp, 12, 1);
 }
 
 void posDisplay() {
@@ -387,6 +451,8 @@ void irButtonAction(decode_results *results) {
 
       default:
         clearLCD(1);
+        lcd.print("?IR:            ");
+        lcd.setCursor(4, 1);
         lcd.print(code);
     }
   }
