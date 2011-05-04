@@ -21,17 +21,17 @@ unsigned long refreshInterval = 0; // Set by diferent displays
 uint8_t commandSent = 0x00;
 uint8_t responseRecv = 0x00;
 int responseLength = 0;
-uint8_t queryTool = 0x00;
-uint8_t flags = 0x00; /* Bit fields for status
-  0  :  Connected
-  1  :  Building
-  2  :  Valid File
-  3  :
-  4  :
-  5  :
-  6  :
-  7  :
-*/
+uint8_t queryTool = 0x00; 
+uint8_t flags = 0x00;       /* Bit fields for status
+                              0  :  Connected
+                              1  :  Building
+                              2  :  Valid File
+                              3  :
+                              4  :
+                              5  :
+                              6  :
+                              7  : Debug Mode
+                            */
 uint8_t txBuf[32];
 uint8_t rxBuf[32];
 
@@ -116,15 +116,16 @@ void printFilename() {
 
 MenuBackend menu = MenuBackend(menuUseEvent,menuChangeEvent);
   //beneath is list of menu items needed to build the menu
-  MenuItem m_connect =    MenuItem       ("1 Connect      >");
-    MenuItem m_debug =      MenuItem     ("1 Debug       <>");
-      MenuItem m_flags =      MenuItem   ("1 Flags       < ");
-  MenuItem m_temps =      MenuItem       ("2 Temp         >");
-    MenuItem m_extruder =   MenuItem     ("2 Set EXT Temp<>");
-      MenuItem m_hbp =        MenuItem   ("2 Set HBP Temp< ");
-  MenuItem m_file =       MenuItem       ("3 SD File      >");
-    MenuItem m_build =      MenuItem     ("3 SD Play File< ");
-  MenuItem m_pos =        MenuItem       ("4 Position      ");
+  MenuItem m_connect =    MenuItem         ("1 Connect      >");
+      MenuItem m_flags =      MenuItem     ("1 Flags       <>");
+        MenuItem m_debug =      MenuItem   ("1 Debug       <>");
+          MenuItem m_debugtog =   MenuItem ("1 Debug Toggle< ");
+  MenuItem m_temps =      MenuItem         ("2 Temp         >");
+    MenuItem m_extruder =   MenuItem       ("2 Set EXT Temp<>");
+      MenuItem m_hbp =        MenuItem     ("2 Set HBP Temp< ");
+  MenuItem m_file =       MenuItem         ("3 SD File      >");
+    MenuItem m_build =      MenuItem       ("3 SD Play File< ");
+  MenuItem m_pos =        MenuItem         ("4 Position      ");
 
 //this function builds the menu and connects the correct items together
 void menuSetup() {
@@ -133,8 +134,9 @@ void menuSetup() {
     //setup the settings menu item
     m_connect.addBefore(m_pos);
     m_connect.addAfter(m_temps);
-      m_connect.addRight(m_debug);
-        m_debug.addRight(m_flags);
+      m_connect.addRight(m_flags);
+        m_flags.addRight(m_debug);
+          m_debug.addRight(m_debugtog);
     m_temps.addAfter(m_file);
       m_temps.addRight(m_extruder);
         m_extruder.addRight(m_hbp);
@@ -145,32 +147,45 @@ void menuSetup() {
 
 void menuUseEvent(MenuUseEvent used){
   if (used.item == m_connect) {
-    bitClear(flags, 0); // Clear connected flag
-    queryMachineName();
-    delay(30);
+    // Only query machine if we are not connected already
+    if (!bitRead(flags, 0)) {
+      queryMachineName();
+      delay(50);
+    }
+    infoDisplay();
   }  
-  else if (used.item == m_debug) {
-    debugDisplay();
-    delay(30);
-  }
   else if (used.item == m_flags) {
     flagDisplay();
-    delay(30);
+  }
+  else if (used.item == m_debug) {
+    debugDisplay();
+  }
+  else if (used.item == m_debugtog) {
+    // Toggle the debug mode on or off
+    if (bitRead(flags, 7)) {
+      bitClear(flags, 7);
+    }
+    else {
+      bitSet(flags, 7);
+    }
+    menu.moveLeft();
   }
   else if (used.item == m_temps) {
     getTemp(extIndex);
-    delay(30);
+    delay(50);
     getTemp(hbpIndex);
-    delay(30);
+    delay(50);
+    tempDisplay();
   }
   else if (used.item == m_file) {
-    if (lastFile[0] == 0x00) {
+    if (lastFile[0] == 0x00) { // Initial setting, or last entry on SD card
       fetchFirstFilename();
     }
     else {
       fetchNextFilename();
     }
-    delay(30);
+    delay(50);
+    printFilename();
   }
   else if (used.item == m_build) {
     if (bitRead(flags, 2)) {
@@ -184,6 +199,7 @@ void menuUseEvent(MenuUseEvent used){
   }
   else if (used.item == m_pos) {
     getPosition();
+    posDisplay();
   }
 }
 
@@ -192,26 +208,33 @@ void menuChangeEvent(MenuChangeEvent changed) {
   lcd.print(changed.to.getName());
   
   refreshInterval = 0; // Always clear refresh interval when the menu changes
-  
-  if (changed.to.getName() == m_build) {
-    if (!bitRead(flags, 2)) { // Valid filename?
-      menu.moveLeft();
-    }
+  if (changed.to.getName() == m_connect) {
+    refreshInterval = 500;
+    infoDisplay();
+  }
+  else if (changed.to.getName() == m_debug) {
+    refreshInterval = 500;
+    debugDisplay();
+  }
+  else if (changed.to.getName() == m_flags) {
+    refreshInterval = 100;
+    flagDisplay();
+  }
+  else if (changed.to.getName() == m_temps) {
+    refreshInterval = 2000;
+    tempDisplay();
   }
   else if (changed.to.getName() == m_file) {
     printFilename(); // Make sure the filename display is always updated
   }
-  else if (changed.to.getName() == m_temps) {
-    refreshInterval = 2000;
+  else if (changed.to.getName() == m_build) {
+    if (!bitRead(flags, 2)) { // Valid filename?
+      menu.moveLeft();
+    }
   }
   else if (changed.to.getName() == m_pos) {
     refreshInterval = 2000;
-  }
-  else if (changed.to.getName() == m_flags) {
-    refreshInterval = 100;
-  }
-  else if (changed.to.getName() == m_debug) {
-    refreshInterval = 500;
+    posDisplay();
   }
 }
 
@@ -239,8 +262,8 @@ void loop() {
         responseRecv = serialIn[2];
         switch(commandSent) {
           case 0x04:
-          
-            posDisplay();
+            // Position query
+            
             break;
             
           case 0x10: // Print file
@@ -249,7 +272,6 @@ void loop() {
           case 0x0A: // Get temp from tool
             extTemp = serialIn[3];
             hbpTemp = serialIn[9];
-            tempDisplay();
             break;
             
           case 0x0C:
@@ -262,7 +284,6 @@ void loop() {
             else {
               bitClear(flags, 0);
             }
-            infoDisplay();
             break;
           
           case 0x12: // Read filename from SD Card
@@ -349,6 +370,8 @@ void loop() {
       else {
         // Other serial data
         responseRecv = 0xFF;
+        // Assume that we are no longer connected
+        bitClear(flags, 0);
       }
       responseLength = serialIndex;
       serialIndex = 0;
@@ -373,15 +396,6 @@ void loop() {
 }
 
 void debugDisplay() {
-  lcd.clear();
-  lcd.print("O:");
-  lcd.print((int)commandSent);
-  lcd.print(" I:");
-  lcd.print((int) responseRecv);
-  lcd.print(" P:");
-  lcd.print((int) serialIn[1]);
-  lcd.print(" ");
-  lcd.print((int) serialIn[responseLength - 1]);
   lcd.setCursor(0, 1);
   for (int i = 0; i < responseLength; i++) {
     lcd.print(serialIn[i]);
@@ -406,13 +420,23 @@ void infoDisplay() {
 }
 
 void flagDisplay() {
-  lcd.setCursor(0, 0);
-  lcd.print(" C B V ? ? ? ? ?");
   lcd.setCursor(0, 1);
-  for (int i = 0; i < 8; i++) {
-    lcd.print(" ");
-    lcd.print(bitRead(flags, i));
-  }
+  lcd.print("c");
+  lcd.print(bitRead(flags, 0));
+  lcd.print("b");
+  lcd.print(bitRead(flags, 1));
+  lcd.print("v");
+  lcd.print(bitRead(flags, 2));
+  lcd.print("-");
+  lcd.print(bitRead(flags, 3));
+  lcd.print("-");
+  lcd.print(bitRead(flags, 4));
+  lcd.print("-");
+  lcd.print(bitRead(flags, 5));
+  lcd.print("-");
+  lcd.print(bitRead(flags, 6));
+  lcd.print("d");
+  lcd.print(bitRead(flags, 7));
 }
 
 void tempDisplay() {
