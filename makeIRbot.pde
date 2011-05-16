@@ -8,66 +8,88 @@ decode_results results;
 
 // Serial Variables
 int serialIndex = 0;
-uint8_t serialIn[64];  // for incoming serial data 
+uint8_t serialIn[32];  // for incoming serial data 
 
 // EEPROM
 //#include <EEPROM.h>
 
 // makeIRbot Variables
-float makeIRbot = 1.01;
+const float makeIRbot = 1.2;
 uint8_t machineName[16];
 unsigned long refreshLast = 0; // Used for tracking refresh intervals
 unsigned long refreshInterval = 0; // Set by diferent displays
+int currentPhase = 0; // Used by various actions that require multiple steps
 uint8_t commandSent = 0x00;
 uint8_t responseRecv = 0x00;
 int responseLength = 0;
-uint8_t queryTool = 0x00; 
-uint8_t flags = 0x00;       /* Bit fields for status
-                              0  :  Connected
-                              1  :  Building
-                              2  :  Valid File
-                              3  :
-                              4  :
-                              5  :
-                              6  :
-                              7  : Debug Mode
-                            */
-uint8_t txBuf[32];
-uint8_t rxBuf[32];
+ /* Bit fields for status
+  0  :  Connected
+  1  :  Building
+  2  :  Valid File
+  3  :
+  4  :
+  5  :
+  6  :
+  7  : Debug Mode
+*/
+uint8_t flags = 0x00;
 
-uint8_t extIndex = 0x02;
+const uint8_t extIndex = 0x02;
 uint8_t extTemp = 0x00;
+const uint8_t extTargetIndex = 0x20;
 uint8_t extTarget = 0x00;
 
-uint8_t hbpIndex = 0x1E;
+const uint8_t hbpIndex = 0x1E;
 uint8_t hbpTemp = 0x00;
+const uint8_t hbpTargetIndex = 0x21;
 uint8_t hbpTarget = 0x00;
 
 uint8_t lastFile[12];
 // .s3g file Extension
-uint8_t validExt[4] = {0x2E, 0x73, 0x33, 0x67}; // ".s3g"
-
-uint8_t axisX = {0x00};    
-uint8_t axisY = {0x00};
-uint8_t axisZ = {0x00};
+const uint8_t validExt[4] = {0x2E, 0x73, 0x33, 0x67}; // ".s3g"
+// Position data [Axis][Bytes]
+uint8_t currentPos[3][4] = {
+  {0x00, 0x00, 0x00, 0x00},    // X
+  {0x00, 0x00, 0x00, 0x00},    // Y
+  {0x00, 0x00, 0x00, 0x00},    // Z
+};
+#define xSteps 11.8 // Stock Cupcake settings and pulleys
+#define ySteps 11.8 // Stock Cupcake settings and pulleys
+#define zSteps 320  // Stock Cupcake settings and pulleys
 
 #include <LiquidCrystal.h>
 const int numRows = 2;
 const int numCols = 16;
 LiquidCrystal lcd(12, 11, 5, 6, 7, 8);
 
-void printTemp(uint8_t temp, int col, int row) {
+void printTemp(uint8_t temp, int col, int row, int symbol) {
   lcd.setCursor(col, row);
-  if(temp < 10) { lcd.print("  ");}
-  else if(temp < 100) { lcd.print(" ");}
+  if(temp < 10) { lcd.print("00");}
+  else if(temp < 100) { lcd.print("0");}
   lcd.print(temp, DEC);
-  lcd.print((char) 223);
+  lcd.print((char) symbol);
 }
 
-void printPos(uint8_t temp, int col, int row) {
+void printPos(int axis, int row, int col) {
   lcd.setCursor(col, row);
-  // Convert 4byte position
-  lcd.print("--0.0");
+  long steps = read32(axis);
+  float decPos = 0;
+  switch (axis) {
+    case 0: decPos = steps / xSteps; break;
+    case 1: decPos = steps / ySteps; break;
+    case 2: decPos = steps / zSteps; break;
+  }
+  // Handle formatting negative numbers
+  if (decPos < 0 && decPos > -10) {
+    lcd.print(" ");  
+  }
+  else if (decPos < 10) {
+    lcd.print("  ");
+  }
+  else if (decPos < 100) {
+    lcd.print(" ");
+  }
+  lcd.println(decPos, DEC);
 }
 
 void validateFilename() {
@@ -125,7 +147,8 @@ MenuBackend menu = MenuBackend(menuUseEvent,menuChangeEvent);
       MenuItem m_hbp =        MenuItem     ("2 Set HBP Temp< ");
   MenuItem m_file =       MenuItem         ("3 SD File      >");
     MenuItem m_build =      MenuItem       ("3 SD Play File< ");
-  MenuItem m_pos =        MenuItem         ("4 Position      ");
+  MenuItem m_pos =        MenuItem         ("4 Position     >");
+    MenuItem m_readypos =   MenuItem       ("4 Ready Pos   < ");
 
 //this function builds the menu and connects the correct items together
 void menuSetup() {
@@ -143,6 +166,7 @@ void menuSetup() {
     m_file.addAfter(m_pos);
       m_file.addRight(m_build);
     m_pos.addAfter(m_connect);
+      m_pos.addRight(m_readypos);
 }
 
 void menuUseEvent(MenuUseEvent used){
@@ -171,11 +195,14 @@ void menuUseEvent(MenuUseEvent used){
     menu.moveLeft();
   }
   else if (used.item == m_temps) {
-    getTemp(extIndex);
-    delay(50);
-    getTemp(hbpIndex);
-    delay(50);
-    tempDisplay();
+    currentPhase++;
+    switch (currentPhase) {
+      case 1: getTemp(extIndex); break;
+      case 2: getTemp(extTargetIndex); break;
+      case 3: getTemp(hbpIndex); break;
+      case 4: getTemp(hbpTargetIndex); break;
+      default: currentPhase = 0; tempDisplay(); // Reset phase then update display
+    }
   }
   else if (used.item == m_file) {
     if (lastFile[0] == 0x00) { // Initial setting, or last entry on SD card
@@ -201,6 +228,10 @@ void menuUseEvent(MenuUseEvent used){
     getPosition();
     posDisplay();
   }
+  else if (used.item == m_readypos) {
+    setPosition();
+    menu.moveLeft();
+  }
 }
 
 void menuChangeEvent(MenuChangeEvent changed) {
@@ -208,6 +239,7 @@ void menuChangeEvent(MenuChangeEvent changed) {
   lcd.print(changed.to.getName());
   
   refreshInterval = 0; // Always clear refresh interval when the menu changes
+  currentPhase = 0; // Always set the current phase back to zero, as not all events have phases
   if (changed.to.getName() == m_connect) {
     refreshInterval = 500;
     infoDisplay();
@@ -221,7 +253,7 @@ void menuChangeEvent(MenuChangeEvent changed) {
     flagDisplay();
   }
   else if (changed.to.getName() == m_temps) {
-    refreshInterval = 2000;
+    refreshInterval = 500;
     tempDisplay();
   }
   else if (changed.to.getName() == m_file) {
@@ -233,9 +265,13 @@ void menuChangeEvent(MenuChangeEvent changed) {
     }
   }
   else if (changed.to.getName() == m_pos) {
-    refreshInterval = 2000;
+    refreshInterval = 1000;
     posDisplay();
   }
+  else if (changed.to.getName() == m_readypos) {
+    //
+  }
+
 }
 
 void setup() {
@@ -261,17 +297,30 @@ void loop() {
       if (serialIn[0] == 0xD5) {
         responseRecv = serialIn[2];
         switch(commandSent) {
-          case 0x04:
-            // Position query
-            
+          case 0x04: // Position query
+            {
+              int ap = 3; // Start of axis data
+              // Loop through each axis
+              for (int i = 0; i < 3; i++) {
+                // Loop through 4 bytes for each axis
+                for (int x = 0; x < 4; x++) {
+                  currentPos[i][x] = serialIn[ap];
+                  ap++;
+                }
+              }
+            }
             break;
             
           case 0x10: // Print file
-          
+            //
             break;
           case 0x0A: // Get temp from tool
-            extTemp = serialIn[3];
-            hbpTemp = serialIn[9];
+            switch (currentPhase) {
+              case 1: extTemp   = serialIn[3]; break;
+              case 2: extTarget = serialIn[3]; break;
+              case 3: hbpTemp   = serialIn[3]; break;
+              case 4: hbpTarget = serialIn[3]; break;
+            }
             break;
             
           case 0x0C:
@@ -313,53 +362,26 @@ void loop() {
           case 0x10:
           case 0x12:
             switch(serialIn[3]) {
-              case 0x00:
-                //responseText = "<SUCCESS>";
-                break;
-              case 0x01:
-                responseText = "<NO CARD>";
-                break;
-              case 0x02:
-                responseText = "<INIT FAILED>";
-                break;
-              case 0x03:
-                responseText = "<PARTITION ???>";
-                break;
-              case 0x04:
-                responseText = "<FS UNKNOWN>";
-                break;
-              case 0x05:
-                responseText = "<ROOT DIR ???>";
-                break;
-              case 0x06:
-                responseText = "<CARD LOCKED>";
-                break;
-              case 0x07:
-                responseText = "<NO SUCH FILE>";
-                break;
+              case 0x00: //responseText = "<SUCCESS>"; break;
+              case 0x01: responseText = "<NO CARD>"; break;
+              case 0x02: responseText = "<INIT FAILED>"; break;
+              case 0x03: responseText = "<PARTITION ???>"; break;
+              case 0x04: responseText = "<FS UNKNOWN>"; break;
+              case 0x05: responseText = "<ROOT DIR ???>"; break;
+              case 0x06: responseText = "<CARD LOCKED>"; break;
+              case 0x07: responseText = "<NO SUCH FILE>"; break;
             }
             break;
             
           // Normal response codes
           default:
             switch(responseRecv) {
-              case 0x00:
-                responseText = "<GENERIC ERROR>";
-                break;
-              case 0x01:
-                //responseText = "<OK>";
-                break;
-              case 0x02:
-                responseText = "<BUFF OVERFLOW>";
-                break;
-              case 0x03:
-                responseText = "<CRC MISMATCH>";
-                break;
-              case 0x04:
-                responseText = "<QUERY OVERFLOW>";
-                break;
-              default:
-                responseText = "<CMD UNKNOWN>";
+              case 0x00: responseText = "<GENERIC ERROR>"; break;
+              case 0x01: //responseText = "<OK>"; break;
+              case 0x02: responseText = "<BUFF OVERFLOW>"; break;
+              case 0x03: responseText = "<CRC MISMATCH>"; break;
+              case 0x04: responseText = "<QUERY OVERFLOW>"; break;
+              default: responseText   = "<CMD UNKNOWN>";
             }
         }
         if (responseText != "") {
@@ -382,7 +404,6 @@ void loop() {
         irButtonAction(&results);
         irrecv.resume(); // Receive the next value
       }
-      
       // Refresh various displays
       if (refreshInterval > 0 ) {
         // Trigger refresh
@@ -421,58 +442,43 @@ void infoDisplay() {
 
 void flagDisplay() {
   lcd.setCursor(0, 1);
-  lcd.print("c");
-  lcd.print(bitRead(flags, 0));
-  lcd.print("b");
-  lcd.print(bitRead(flags, 1));
-  lcd.print("v");
-  lcd.print(bitRead(flags, 2));
-  lcd.print("-");
-  lcd.print(bitRead(flags, 3));
-  lcd.print("-");
-  lcd.print(bitRead(flags, 4));
-  lcd.print("-");
-  lcd.print(bitRead(flags, 5));
-  lcd.print("-");
-  lcd.print(bitRead(flags, 6));
-  lcd.print("d");
-  lcd.print(bitRead(flags, 7));
+  lcd.print("c"); lcd.print(bitRead(flags, 0));
+  lcd.print("b"); lcd.print(bitRead(flags, 1));
+  lcd.print("v"); lcd.print(bitRead(flags, 2));
+  lcd.print("-"); lcd.print(bitRead(flags, 3));
+  lcd.print("-"); lcd.print(bitRead(flags, 4));
+  lcd.print("-"); lcd.print(bitRead(flags, 5));
+  lcd.print("-"); lcd.print(bitRead(flags, 6));
+  lcd.print("d"); lcd.print(bitRead(flags, 7));
 }
 
 void tempDisplay() {
   lcd.setCursor(0,0);
   lcd.print("    Ext     HBP ");
-  clearLCD(1);
-  printTemp(extTarget, 0, 1);
-  printTemp(extTemp, 4, 1);
-  printTemp(hbpTarget, 8, 1);
-  printTemp(hbpTemp, 12, 1);
+  printTemp(extTemp, 0, 1, 47);
+  printTemp(extTarget, 4, 1, 223);
+  printTemp(hbpTemp, 8, 1, 47);
+  printTemp(hbpTarget, 12, 1, 223);
 }
 
 void posDisplay() {
   lcd.setCursor(0,0);
-  lcd.print("  X    Y    Z  ");
+  lcd.print("  X    Y    Z   ");
   clearLCD(1);
-  printPos(axisX, 0, 1);
-  printPos(axisY, 5, 1);
-  printPos(axisZ, 10, 1);
+  printPos(0, 1, 0);
+  printPos(1, 1, 5);
+  printPos(2, 1, 10);
 }
 
 void irButtonAction(decode_results *results) {
   int code = (int) results->value;
   if(code != -1) {
     switch(code) {
-      // Up Arrow
-      case -32513: menu.moveUp(); break;
-      // Down Arrow
-      case 18493: menu.moveDown(); break;
-      // Left Arrow
-      case 25706: menu.moveLeft(); break;
-      // Right Arrow
-      case 24620: menu.moveRight(); break;
-      // OK/Select Arrow
-      case -16257: menu.use(); break;
-
+      case -32513: menu.moveUp(); break;    // Up Arrow
+      case 18493: menu.moveDown(); break;   // Down Arrow
+      case 25706: menu.moveLeft(); break;   // Left Arrow
+      case 24620: menu.moveRight(); break;  // Right Arrow
+      case -16257: menu.use(); break;       // OK/Select Arrow
       default:
         clearLCD(1);
         lcd.print("?IR:            ");
@@ -483,32 +489,27 @@ void irButtonAction(decode_results *results) {
 }
 
 void queryMakerbotInfo() { // Fetch build name of machine (Cupcake)
-  uint8_t data[]= {
-    0x14, 0x18, 0x00  };
+  uint8_t data[]= {0x14, 0x18, 0x00};
   sendBytesWithCRC(data, sizeof(data));
 }
 
 void queryMachineName() { // Read 16 chars from EEPROM at Offset 32
-  uint8_t data[] = {
-    0x0C, 0x20, 0x00, 0x10 };
+  uint8_t data[] = {0x0C, 0x20, 0x00, 0x10};
   sendBytesWithCRC(data, sizeof(data));
 }
 
 void getTemp(uint8_t toolIndex) {
-  uint8_t data[]= {
-    0x0A, 0x00, toolIndex };
+  uint8_t data[]= {0x0A, 0x00, toolIndex};
   sendBytesWithCRC(data, sizeof(data));
 }
 
 void fetchFirstFilename() {
-  uint8_t data[]= {
-    0x12, 0x01  };
+  uint8_t data[]= {0x12, 0x01};
   sendBytesWithCRC(data, sizeof(data));
 }
 
 void fetchNextFilename() {
-  uint8_t data[]= {
-    0x12, 0x00  };
+  uint8_t data[]= {0x12, 0x00};
   sendBytesWithCRC(data, sizeof(data));
 }
 
@@ -521,14 +522,17 @@ void playbackFile(uint8_t *filename) {
     i++;
   }
   data[i + 1] = 0x00; // Add null termination
-  
   sendBytesWithCRC(data, i + 2);
 }
 
 void getPosition() {
-  uint8_t data[] = {
-    0x04 };
+  uint8_t data[] = {0x04};
   sendBytesWithCRC(data, 1);
+}
+
+void setPosition() { // Hardcoded to X0 Y0 Z15
+  uint8_t data[] = {0x82, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC2, 0x12, 0x00, 0x00};
+  sendBytesWithCRC(data, 13);
 }
 
 void sendBytesWithCRC(uint8_t *data, int len){
@@ -537,12 +541,6 @@ void sendBytesWithCRC(uint8_t *data, int len){
   int a;
   int fn = 1;
   commandSent = data[0];
-  queryTool = 0x00;
-  switch(commandSent) {
-    case 0x0A:
-      queryTool = data[2];
-      break;
-  }
   Serial.print(0xD5, BYTE);    // Send header Identifier byte
   Serial.print(length, BYTE);  // Send payload length
   // Send Payload
@@ -568,6 +566,22 @@ uint8_t calculateCRC (uint8_t crc, uint8_t data) {
       crc >>= 1;
   }
   return crc;
+}
+
+uint32_t read32(int axis) {
+  union {
+    // AVR is little-endian
+    int32_t a;
+    struct {
+      uint8_t data[4];
+    } b;
+  } shared;
+  shared.b.data[0] = currentPos[axis][0];
+  shared.b.data[1] = currentPos[axis][1];
+  shared.b.data[2] = currentPos[axis][2];
+  shared.b.data[3] = currentPos[axis][3];
+
+  return shared.a;
 }
 
 void clearLCD(int row) {
