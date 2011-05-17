@@ -225,8 +225,11 @@ void menuUseEvent(MenuUseEvent used){
     }
   }
   else if (used.item == m_pos) {
-    getPosition();
-    posDisplay();
+    currentPhase++;
+    switch (currentPhase) {
+      case 1: getPosition(); break;
+      default: currentPhase = 0; posDisplay();
+    }
   }
   else if (used.item == m_readypos) {
     setPosition();
@@ -253,7 +256,7 @@ void menuChangeEvent(MenuChangeEvent changed) {
     flagDisplay();
   }
   else if (changed.to.getName() == m_temps) {
-    refreshInterval = 500;
+    refreshInterval = 250;
     tempDisplay();
   }
   else if (changed.to.getName() == m_file) {
@@ -265,7 +268,7 @@ void menuChangeEvent(MenuChangeEvent changed) {
     }
   }
   else if (changed.to.getName() == m_pos) {
-    refreshInterval = 1000;
+    refreshInterval = 500;
     posDisplay();
   }
   else if (changed.to.getName() == m_readypos) {
@@ -362,7 +365,7 @@ void loop() {
           case 0x10:
           case 0x12:
             switch(serialIn[3]) {
-              case 0x00: //responseText = "<SUCCESS>"; break;
+              case 0x00: /*responseText = "<SUCCESS>";*/ break;
               case 0x01: responseText = "<NO CARD>"; break;
               case 0x02: responseText = "<INIT FAILED>"; break;
               case 0x03: responseText = "<PARTITION ???>"; break;
@@ -377,7 +380,7 @@ void loop() {
           default:
             switch(responseRecv) {
               case 0x00: responseText = "<GENERIC ERROR>"; break;
-              case 0x01: //responseText = "<OK>"; break;
+              case 0x01: /*responseText = "<OK>";*/ break;
               case 0x02: responseText = "<BUFF OVERFLOW>"; break;
               case 0x03: responseText = "<CRC MISMATCH>"; break;
               case 0x04: responseText = "<QUERY OVERFLOW>"; break;
